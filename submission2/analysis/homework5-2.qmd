@@ -7,6 +7,8 @@ execute:
 ---
 ####### The link to my repository: https://github.com/ellenwu-git/homework5
 
+\newpage
+
 ```{python}
 #| echo: false
 
@@ -14,6 +16,7 @@ execute:
 import pandas as pd
 import matplotlib.pyplot as plt
 import statsmodels.api as sm
+from IPython.display import Markdown, display
 import statsmodels.formula.api as smf
 import warnings
 warnings.simplefilter('ignore')
@@ -22,7 +25,7 @@ warnings.simplefilter('ignore')
 df = pd.read_csv('/Users/ellenwu/homework5-1/data/output/acs_medicaid.txt',delimiter='\t')
 ```
 
-####### 1.Plot the share of the adult population with direct purchase health insurance over time.
+####### 1. Plot the share of the adult population with direct purchase health insurance over time.
 
 ```{python}
 #| echo: false
@@ -49,11 +52,11 @@ plt.ylabel("Share with Direct Purchase Insurance")
 plt.ylim(0, trend['share_direct'].max() * 1.1 if not trend['share_direct'].isna().all() else 0.05)
 plt.grid(True)
 plt.xticks(ticks=trend['year'], labels=trend['year'])
+plt.ylim(0.065, 0.095)
 plt.tight_layout()
 plt.show()
 
 ```
-
 
 \newpage
 
@@ -61,6 +64,7 @@ plt.show()
 
 In later years, the share of adults with direct-purchase health insurance declined after peaking during the initial rollout of the ACA exchanges. Two major policy changes likely contributed to this drop. First, the repeal of the individual mandate penalty in 2019 reduced the incentive for healthy individuals to purchase insurance, weakening risk pools. Second, the termination of cost-sharing reduction payments in 2017 led insurers to raise premiums, making plans less affordable for many. These shifts undermined the stability of the individual market and reduced participation.
 
+\newpage
 
 ####### 3. Plot the share of the adult population with Medicaid over time.
 
@@ -133,7 +137,6 @@ plt.show()
 
 ```
 
-
 \newpage
 
 ####### 5. Calculate the average percent of uninsured individuals in 2012 and 2015, separately for expansion and non-expansion states. Present your results in a basic 2x2 DD table.
@@ -141,40 +144,36 @@ plt.show()
 ```{python}
 #| echo: false
 
-# Filter to 2012 and 2015
-df_dd = df[df['year'].isin([2012, 2015])].copy()
+df["uninsured_rate"] = df["uninsured"] / df["adult_pop"]
 
-# Keep only states that expanded in 2014 or never expanded
-expansion_2014_states = df[df['expand_year'] == 2014]['State'].unique()
-never_expanded_states = df[df['expand_ever'] == False]['State'].unique()
-keep_states = list(set(expansion_2014_states).union(set(never_expanded_states)))
-df_dd = df_dd[df_dd['State'].isin(keep_states)].copy()
-
-# Assign treatment group
-df_dd['group'] = df_dd['State'].apply(
-    lambda x: 'Expanded' if x in expansion_2014_states else 'Not Expanded'
+# Filter for expansion in 2014 or never
+reg_data = (
+    df.copy()
+    .loc[(df["expand_year"].isna()) | (df["expand_year"] == 2014)]
+    .loc[df["year"].isin([2012, 2015])]
 )
 
-# Calculate average uninsurance rate by year and group
-ate_table = (
-    df_dd.groupby(['group', 'year'])[['uninsured', 'adult_pop']]
-    .sum()
+# Group and pivot the summary table
+dd_table = (
+    reg_data.groupby(["expand_ever", "year"])["uninsured_rate"]
+    .mean()
+    .reset_index()
+    .pivot(index="expand_ever", columns="year", values="uninsured_rate")
+    .rename(columns={2012: "Pre", 2015: "Post"})
     .reset_index()
 )
 
-ate_table['uninsured_rate'] = ate_table['uninsured'] / ate_table['adult_pop']
+# Label the groups
+dd_table["Group"] = dd_table["expand_ever"].map({False: "Non-expansion", True: "Expansion"})
+dd_table = dd_table[["Group", "Pre", "Post"]]
 
-# Pivot for 2x2 display
-dd_pivot = ate_table.pivot(index='group', columns='year', values='uninsured_rate')
-dd_pivot['Change'] = dd_pivot[2015] - dd_pivot[2012]
+# Display markdown table
+def display_markdown_table(df):
+    from IPython.display import Markdown, display
+    markdown = df.to_markdown(index=False)
+    display(Markdown(markdown))
 
-# DiD estimate
-did_estimate = dd_pivot.loc['Expanded', 'Change'] - dd_pivot.loc['Not Expanded', 'Change']
-
-# Display
-print("\nQ5: Difference-in-Differences Table (Uninsurance Rates)")
-print(dd_pivot)
-print(f"\nEstimated ATE (Difference-in-Differences): {did_estimate:.4f}")
+display_markdown_table(dd_table.round(3))
 
 ```
 
@@ -185,23 +184,50 @@ print(f"\nEstimated ATE (Difference-in-Differences): {did_estimate:.4f}")
 ```{python}
 #| echo: false
 
-# Subset to relevant states
-df_reg_all_years = df[df['State'].isin(keep_states)].copy()
+reg_data = df.copy()
+reg_data["post"] = (reg_data["year"] >= 2014).astype(int)
+reg_data = reg_data[(reg_data["expand_year"].isna()) | (reg_data["expand_year"] == 2014)]
 
-# Create DiD variables
-df_reg_all_years['treatment'] = df_reg_all_years['State'].apply(lambda x: 1 if x in expansion_2014_states else 0)
-df_reg_all_years['post'] = df_reg_all_years['year'].apply(lambda x: 1 if x >= 2014 else 0)
-df_reg_all_years['interaction'] = df_reg_all_years['treatment'] * df_reg_all_years['post']
+# Handle possible NaNs in expand_ever
+reg_data = reg_data[reg_data["expand_ever"].notna()]
+reg_data["expand_ever"] = reg_data["expand_ever"].astype(int)
+reg_data["treat"] = reg_data["post"] * reg_data["expand_ever"]
+reg_data["uninsured_rate"] = reg_data["uninsured"] / reg_data["adult_pop"]
 
-# Calculate uninsured rate
-df_reg_all_years['uninsured_rate'] = df_reg_all_years['uninsured'] / df_reg_all_years['adult_pop']
+# Step 2: Run OLS regression
+model = smf.ols("uninsured_rate ~ post + expand_ever + treat", data=reg_data).fit()
 
-# Fit regression
-model = smf.ols('uninsured_rate ~ treatment + post + interaction', data=df_reg_all_years).fit()
+# Step 3: Extract results
+coefs = model.params
+ses = model.bse
+pvals = model.pvalues
+n_obs = int(model.nobs)
+r2 = model.rsquared
 
-# Print results
-print(model.summary())
-print(f"\nEstimated ATE (DiD Regression across all years): {model.params['interaction']:.4f}")
+# Step 4: Format output table
+def format_coef(val, se, p):
+    stars = ""
+    if p < 0.01:
+        stars = "***"
+    elif p < 0.05:
+        stars = "**"
+    elif p < 0.1:
+        stars = "*"
+    return f"{val:.3f}{stars} ({se:.3f})"
+
+rows = [
+    ["Post 2014", format_coef(coefs["post"], ses["post"], pvals["post"])],
+    ["Expand", format_coef(coefs["expand_ever"], ses["expand_ever"], pvals["expand_ever"])],
+    ["Post x Expand", format_coef(coefs["treat"], ses["treat"], pvals["treat"])],
+    ["Num. Obs.", f"{n_obs}"],
+    ["R2", f"{r2:.3f}"]
+]
+
+dd_table = pd.DataFrame(rows, columns=["", "Standard DD"])
+
+# Step 5: Display as markdown
+markdown = dd_table.to_markdown(index=False)
+display(Markdown(markdown))
 
 ```
 
@@ -212,24 +238,46 @@ print(f"\nEstimated ATE (DiD Regression across all years): {model.params['intera
 ```{python}
 #| echo: false
 
-# Filter for states that expanded in 2014 or never expanded
-fe_df = df[df['State'].isin(keep_states)].copy()
+import statsmodels.formula.api as smf
 
-# Create DiD variables
-fe_df['treatment'] = fe_df['State'].isin(expansion_2014_states).astype(int)
-fe_df['post'] = (fe_df['year'] >= 2014).astype(int)
-fe_df['interaction'] = fe_df['treatment'] * fe_df['post']
-fe_df['uninsured_rate'] = fe_df['uninsured'] / fe_df['adult_pop']
+# Prepare data
+reg_data = df.copy()
+reg_data["post"] = (reg_data["year"] >= 2014).astype(int)
+reg_data["expand_ever"] = reg_data["expand_ever"].fillna(False).astype(int)
+reg_data["treat"] = reg_data["post"] * reg_data["expand_ever"]
+reg_data["uninsured_rate"] = reg_data["uninsured"] / reg_data["adult_pop"]
+reg_data = reg_data[(reg_data["expand_year"].isna()) | (reg_data["expand_year"] == 2014)]
 
-# Ensure no missing values in key columns
-fe_df = fe_df.dropna(subset=['uninsured_rate', 'interaction'])
+# Run OLS with State and Year fixed effects
+model_twfe = smf.ols("uninsured_rate ~ post + expand_ever + treat + C(State) + C(year)", data=reg_data).fit()
 
-# Run DiD with fixed effects using categorical terms
-model = smf.ols("uninsured_rate ~ interaction + C(State) + C(year)", data=fe_df).fit()
+# Extract results for display
+import numpy as np
+import pandas as pd
+from IPython.display import display, Markdown
 
-# Output
-print(model.summary())
-print(f"\nEstimated ATE (DiD interaction effect): {model.params['interaction']:.4f}")
+def format_coef(val, se, p):
+    stars = ""
+    if p < 0.01:
+        stars = "***"
+    elif p < 0.05:
+        stars = "**"
+    elif p < 0.1:
+        stars = "*"
+    return f"{val:.3f}{stars} ({se:.3f})"
+
+rows = [
+    ["Post 2014", format_coef(model_twfe.params['post'], model_twfe.bse['post'], model_twfe.pvalues['post'])],
+    ["Expand", format_coef(model_twfe.params['expand_ever'], model_twfe.bse['expand_ever'], model_twfe.pvalues['expand_ever'])],
+    ["Post x Expand", format_coef(model_twfe.params['treat'], model_twfe.bse['treat'], model_twfe.pvalues['treat'])],
+    ["Num. Obs.", f"{int(model_twfe.nobs)}"],
+    ["R2", f"{model_twfe.rsquared:.3f}"]
+]
+
+# Build and display table
+results_table = pd.DataFrame(rows, columns=["", "TWFE"])
+display(Markdown(results_table.to_markdown(index=False)))
+
 ```
 
 \newpage
@@ -239,33 +287,62 @@ print(f"\nEstimated ATE (DiD interaction effect): {model.params['interaction']:.
 ```{python}
 #| echo: false
 
-# Copy full dataset
-df_all = df.copy()
 
-# Treatment: 1 if a state ever expanded Medicaid
-df_all['treatment'] = df_all['expand_ever'].astype(int)
 
-# Post: 1 if year >= expansion year (if applicable)
-df_all['post'] = (df_all['year'] >= df_all['expand_year']).astype(int)
+# Copy data
+reg_data2 = df.copy()
 
-# DiD interaction
-df_all['interaction'] = df_all['treatment'] * df_all['post']
+# Create treatment indicator (1 if year >= expansion year)
+reg_data2["treat"] = 0
+reg_data2.loc[
+    (reg_data2["year"] >= reg_data2["expand_year"]) & (reg_data2["expand_year"].notna()),
+    "treat"
+] = 1
 
-# Outcome: uninsurance rate
-df_all['uninsured_rate'] = df_all['uninsured'] / df_all['adult_pop']
+# Create outcome variable if needed
+reg_data2["uninsured_rate"] = reg_data2["uninsured"] / reg_data2["adult_pop"]
 
-# Drop missing or malformed data
-df_all = df_all.dropna(subset=['uninsured_rate', 'interaction', 'State', 'year'])
+# Drop rows with missing values in key columns
+reg_data2 = reg_data2.dropna(subset=["treat", "uninsured_rate", "State", "year"])
 
-# Estimate DiD with fixed effects using categorical variables
-model_all = smf.ols("uninsured_rate ~ interaction + C(State) + C(year)", data=df_all).fit()
+# Run regression with state and year fixed effects
+twfe_model = smf.ols("uninsured_rate ~ treat + C(State) + C(year)", data=reg_data2).fit()
 
-# Output
-print("\nQ8: DiD Regression with All States and Years Included (w/ FE)")
-print(model_all.summary())
-print(f"\nEstimated ATE (All States, w/ FE): {model_all.params['interaction']:.4f}")
+# Extract results
+coefs = twfe_model.params
+ses = twfe_model.bse
+pvals = twfe_model.pvalues
+r2 = twfe_model.rsquared
+n_obs = int(twfe_model.nobs)
+
+# Format for markdown table
+def format_coef(val, se, p):
+    if p < 0.01:
+        stars = "***"
+    elif p < 0.05:
+        stars = "**"
+    elif p < 0.1:
+        stars = "*"
+    else:
+        stars = ""
+    return f"{val:.3f}{stars} ({se:.3f})"
+
+# Build results table
+rows = []
+rows.append(["Time-varying Treat", format_coef(coefs['treat'], ses['treat'], pvals['treat'])])
+rows.append(["Num. Obs.", f"{n_obs}"])
+rows.append(["R2", f"{r2:.3f}"])
+
+results_table = pd.DataFrame(rows, columns=["", "Time-varying Treatment"])
+
+# Display markdown table
+def display_markdown_table(df):
+    display(Markdown(df.to_markdown(index=False)))
+
+display_markdown_table(results_table)
 
 ```
+Yes, the results changed slightly in Question 8 due to the inclusion of all states, including those that expanded Medicaid after 2014. While the ATE in Question 7 was –0.0188, it increased in magnitude to –0.0204 in Question 8. This shift reflects the added post-treatment variation from late-expanding states like Virginia and Louisiana, which were initially untreated but later contributed to the treated group. Including these states strengthened the estimated effect by capturing more within-state changes over time.
 
 \newpage
 
@@ -274,54 +351,54 @@ print(f"\nEstimated ATE (All States, w/ FE): {model_all.params['interaction']:.4
 ```{python}
 #| echo: false
 
-keep_states = df[df['expand_year'].isin([2014, pd.NA])]['State'].unique()
-es_df = df[df['State'].isin(keep_states)].copy()
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import statsmodels.formula.api as smf
 
-es_df['event_time'] = es_df['year'] - es_df['expand_year']
-# Set non-expansion states to NaN (so we can drop them later or plot separately if needed)
-es_df.loc[es_df['expand_ever'] == False, 'event_time'] = None
+# Step 1: Setup and create event_time
+es_data = df.copy()
+es_data['event_time'] = es_data['year'] - es_data['expand_year']
+es_data = es_data[(es_data['event_time'] >= -5) & (es_data['event_time'] <= 5)]
+es_data = es_data[es_data['event_time'] != -1]  # drop reference year
 
-# Drop rows with missing adult_pop or uninsured
-es_df = es_df.dropna(subset=['adult_pop', 'uninsured'])
+# Step 2: Create dummy variables with valid names
+for i in range(-5, 6):
+    if i == -1:
+        continue  # skip reference
+    safe_name = f'event_m{abs(i)}' if i < 0 else f'event_p{i}'
+    es_data[safe_name] = (es_data['event_time'] == i).astype(int)
 
-# Calculate outcome
-es_df['uninsured_rate'] = es_df['uninsured'] / es_df['adult_pop']
+# Step 3: Add outcome
+es_data['uninsured_rate'] = es_data['uninsured'] / es_data['adult_pop']
 
-# Keep years in a reasonable window (optional)
-es_df = es_df[(es_df['event_time'] >= -5) & (es_df['event_time'] <= 5)]
+# Step 4: Build regression formula
+event_vars = [f'event_m{abs(i)}' if i < 0 else f'event_p{i}' for i in range(-5, 6) if i != -1]
+formula = 'uninsured_rate ~ ' + ' + '.join(event_vars) + ' + C(State) + C(year)'
 
-# Replace negative years with 'pre' and positive with 'post'
-for t in range(-5, 6):
-    if t == 0:
-        continue
-    label = f"pre{abs(t)}" if t < 0 else f"post{t}"
-    es_df[label] = (es_df['event_time'] == t).astype(int)
+# Step 5: Run regression
+event_model = smf.ols(formula=formula, data=es_data).fit()
 
-event_terms = ' + '.join([f"pre{abs(t)}" if t < 0 else f"post{t}" for t in range(-5, 6) if t != 0])
-formula = f'uninsured_rate ~ {event_terms} + C(State) + C(year)'
+# Step 6: Extract coefficients and CIs
+coefs = event_model.params[event_vars]
+errors = event_model.bse[event_vars]
 
-event_model = smf.ols(formula=formula, data=es_df).fit()
+# Convert back to event years for plotting
+event_years = [
+    -int(var.replace('event_m', '')) if 'event_m' in var else int(var.replace('event_p', ''))
+    for var in event_vars
+]
 
-# Extract coefficients and CIs
-years = [t for t in range(-2, 5) if t != 0]
-labels = [f"pre{abs(t)}" if t < 0 else f"post{t}" for t in years]
-coefs = [event_model.params.get(label, 0) for label in labels]
-errors = [event_model.bse.get(label, 0) for label in labels]
-
-# Plot error bars
-plt.figure(figsize=(10, 5))
-plt.errorbar(years, coefs, yerr=1.96 * pd.Series(errors), fmt='o', capsize=4, label="Point Estimate", color='purple')
-
-# Plot connecting line
-plt.plot(years, coefs, linestyle='-', color='purple', alpha=0.6)
-
-# Add baseline and labels
-plt.axhline(0, linestyle='--', color='gray')
-plt.title("Event Study: Medicaid Expansion Effect on Uninsured Rate")
-plt.xlabel("Years Since Expansion (2012-2018)")
-plt.ylabel("Estimated Effect on Uninsured Rate")
-plt.xticks(years)
-plt.grid(True)
+# Step 7: Plot
+plt.figure(figsize=(8, 5))
+plt.errorbar(event_years, coefs.values, yerr=1.96 * errors.values,
+             fmt='o', capsize=5, color='purple')
+plt.axhline(0, color='black', linewidth=1)
+plt.axvline(0, color='pink', linestyle='--', linewidth=2)
+plt.title("Event Study with Common Treatment Time", fontsize=16)
+plt.xlabel("Years Since Expansion (Event Time)")
+plt.ylabel("Coefficient")
+plt.grid(axis='y', linestyle='--', color='gray', alpha=0.6)
 plt.tight_layout()
 plt.show()
 
@@ -332,62 +409,42 @@ plt.show()
 ####### 10. Repeat part 9 but again include states that expanded after 2014. Note: this is tricky…you need to put all states onto “event time” to create this graph.
 ```{python}
 #| echo: false
-# Keep only event_time between -2 and 5 (inclusive), drop event_time == 0
-es_df = df[df['expand_ever'] == True].copy()
-es_df['event_time'] = es_df['year'] - es_df['expand_year']
-es_df = es_df[(es_df['event_time'] >= -2) & (es_df['event_time'] <= 5)]
-es_df = es_df[es_df['event_time'] != 0]
 
-# Create event-time dummies
-for i in range(-2, 6):  # Note: upper bound is 6 to include 5
-    if i == 0:
-        continue
-    label = f'event_m{abs(i)}' if i < 0 else f'event_p{i}'
-    es_df[label] = (es_df['event_time'] == i).astype(int)
+# Step 1: Create relative year (event time)
+reg_data2 = df.copy()
+reg_data2["relative_year"] = (reg_data2["year"] - reg_data2["expand_year"]).fillna(np.inf)
+reg_data2 = reg_data2[reg_data2["relative_year"] != np.inf]  # Keep only states with expansion year
+reg_data2["relative_year"] = reg_data2["relative_year"].clip(lower=-4, upper=5)
+reg_data2["uninsured_rate"] = reg_data2["uninsured"] / reg_data2["adult_pop"]
 
-# Create outcome variable
-es_df["uninsured_rate"] = es_df["uninsured"] / es_df["adult_pop"]
+# Step 2: Create event dummies
+for yr in range(-4, 6):  # -4 to 5
+    if yr == -1:
+        continue  # reference category
+    colname = f"event_m{abs(yr)}" if yr < 0 else f"event_p{yr}"
+    reg_data2[colname] = (reg_data2["relative_year"] == yr).astype(int)
 
-# Build regression formula
-event_terms = ' + '.join([
-    f'event_m{abs(i)}' if i < 0 else f'event_p{i}' 
-    for i in range(-2, 6) if i != 0
-])
-formula = f'uninsured_rate ~ {event_terms} + C(State) + C(year)'
+# Step 3: Run regression (with State + year FE)
+event_vars = [f"event_m{abs(i)}" if i < 0 else f"event_p{i}" for i in range(-4, 6) if i != -1]
+formula = f"uninsured_rate ~ {' + '.join(event_vars)} + C(State) + C(year)"
+event_model = smf.ols(formula=formula, data=reg_data2).fit()
 
-# Run regression
-event_model = smf.ols(formula=formula, data=es_df).fit()
+# Step 4: Extract coefficients and SEs
+coefs = event_model.params[event_vars]
+errors = event_model.bse[event_vars]
 
-# Extract coefficients
-coefs = event_model.params.filter(like='event_')
-cis = event_model.conf_int().loc[coefs.index]
-errors = (cis[1] - cis[0]) / 2
+# Step 5: Convert names to relative years for x-axis
+event_years = [-int(var.replace('event_m', '')) if 'event_m' in var else int(var.replace('event_p', '')) for var in event_vars]
 
-# Create event year labels
-def parse_event_label(name):
-    if "m" in name:
-        return -int(name.split("m")[1])
-    else:
-        return int(name.split("p")[1])
-
-event_years = [parse_event_label(name) for name in coefs.index]
-
-plot_df = pd.DataFrame({
-    'event_year': event_years,
-    'coef': coefs.values,
-    'stderr': errors.values
-}).sort_values('event_year')
-
-# Plot
-plt.figure(figsize=(10, 5))
-plt.errorbar(plot_df['event_year'], plot_df['coef'], yerr=1.96 * plot_df['stderr'],
-             fmt='o', capsize=4, color='purple')
-plt.plot(plot_df['event_year'], plot_df['coef'], linestyle='-', color='purple', alpha=0.7)
-plt.axhline(0, linestyle='--', color='gray')
-plt.title("Event Study: Medicaid Expansion Effect on Uninsured Rate (All Expansion States)")
-plt.xlabel("Years Since Expansion (2014)")
-plt.ylabel("Estimated Effect on Uninsured Rate")
-plt.grid(True)
+# Step 6: Plot
+plt.figure(figsize=(8, 5))
+plt.errorbar(event_years, coefs, yerr=1.96 * errors, fmt='o', color='purple', capsize=5)
+plt.axvline(x=-1, color="pink", linestyle="--")
+plt.axhline(y=0, color="black", linestyle="-")
+plt.title("Event Study with Staggered Treatment", fontsize=16)
+plt.ylabel("Coefficient", fontsize=12)
+plt.xlabel("Years Relative to Expansion", fontsize=12)
+plt.grid(axis='y', color='gray', linestyle='--', alpha=0.5)
 plt.tight_layout()
 plt.show()
 ```
