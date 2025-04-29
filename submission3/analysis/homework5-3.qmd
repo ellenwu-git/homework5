@@ -342,7 +342,7 @@ def display_markdown_table(df):
 display_markdown_table(results_table)
 
 ```
-Yes, the results changed slightly in Question 8 due to the inclusion of all states, including those that expanded Medicaid after 2014. While the ATE in Question 7 was –0.0188, it increased in magnitude to –0.0204 in Question 8. This shift reflects the added post-treatment variation from late-expanding states like Virginia and Louisiana, which were initially untreated but later contributed to the treated group. Including these states strengthened the estimated effect by capturing more within-state changes over time.
+Yes, the results differ slightly. In question 7, the estimate is based only on states that expanded in 2014, isolating a cleaner treatment effect with Post × Expand = -0.022. In question 8, by including all expansion states (even those that expanded later), the analysis uses a time-varying treatment and yields an estimate of -0.024. This difference arises because the second model averages treatment effects across states and years, introducing more heterogeneity and potentially weaker assumptions about parallel trends.
 
 \newpage
 
